@@ -4,6 +4,7 @@ export class SectionMarker {
 	public readonly line: THREE.Line;
 	private readonly geometry: THREE.BufferGeometry;
 	private readonly positions: Float32Array;
+	private readonly sphere: THREE.Mesh;
 
 	constructor(color = 0xcad0d7) {
 		// Two-point line segment
@@ -14,6 +15,13 @@ export class SectionMarker {
 		this.line = new THREE.Line(this.geometry, material);
 		this.line.visible = false;
 		this.line.renderOrder = 10;
+
+		// Persistent sphere child to mark the section location (added to the line object)
+		const sphereGeometry = new THREE.SphereGeometry(0.15, 8, 6);
+		const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xff6b35 });
+		this.sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+		this.sphere.renderOrder = 11;
+		this.line.add(this.sphere);
 	}
 
 	public setVisible(v: boolean) {
@@ -25,19 +33,15 @@ export class SectionMarker {
 		const a = new THREE.Vector2(center.x - n.x * halfWidth, center.y - n.y * halfWidth);
 		const b = new THREE.Vector2(center.x + n.x * halfWidth, center.y + n.y * halfWidth);
 
-		// Create a small sphere at the center point to mark the section location
-		const sphereGeometry = new THREE.SphereGeometry(0.15, 8, 6);
-		const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xff6b35 });
-		const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-		sphere.position.set(center.x, center.y, zAt(center.x, center.y) + 0.08);
-		sphere.renderOrder = 11;
-		
-		// Place bar slightly above surface to avoid z-fighting
-		const zCenter = zAt(center.x, center.y) + 0.04;
+		// Place bar slightly above the alignment plane (alignment is at Z=0)
+		const zCenter = 0.04;
 		this.positions[0] = a.x; this.positions[1] = a.y; this.positions[2] = zCenter;
 		this.positions[3] = b.x; this.positions[4] = b.y; this.positions[5] = zCenter;
 		(this.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
 		this.geometry.computeBoundingSphere();
+
+		// Update sphere position slightly above the alignment plane
+		this.sphere.position.set(center.x, center.y, 0.08);
 	}
 }
 

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { HeightFunction } from './surface';
+import { RoadTemplate } from './roadway';
 
 export interface SectionData {
 	distances: number[]; // along normal, centered at 0
@@ -8,6 +9,15 @@ export interface SectionData {
 	maxZ: number;
 	centerZ: number; // elevation at alignment center (profile)
 	halfWidth: number; // section half-width used for plotting
+	// Daylight info (optional)
+	leftEdgeOffset?: number;
+	leftEdgeZ?: number;
+	leftDaylightOffset?: number;
+	leftDaylightZ?: number;
+	rightEdgeOffset?: number;
+	rightEdgeZ?: number;
+	rightDaylightOffset?: number;
+	rightDaylightZ?: number;
 }
 
 export class CrossSectionOverlay {
@@ -18,6 +28,10 @@ export class CrossSectionOverlay {
 	private isDragging = false;
 	private dragOffsetX = 0;
 	private dragOffsetY = 0;
+	private resizeObserver?: ResizeObserver;
+	private lastSection?: SectionData;
+	private lastTitle?: string;
+	private lastTemplate?: RoadTemplate;
 
 	constructor(containerId = 'overlay', canvasId = 'overlay-canvas') {
 		const container = document.getElementById(containerId) as HTMLDivElement | null;
@@ -31,16 +45,31 @@ export class CrossSectionOverlay {
 		this.ctx = ctx;
 
 		this.setupDrag();
+		this.setupResizeObserver();
 	}
 
 	public setActive(on: boolean) {
 		this.active = on;
 		this.container.classList.toggle('hidden', !on);
+		if (on && this.lastSection) {
+			this.draw(this.lastSection, this.lastTitle, this.lastTemplate);
+		}
 	}
 
 	private setupDrag() {
 		const header = this.container.querySelector('.overlay-header') as HTMLDivElement | null;
 		if (!header) return;
+		const closeBtn = header.querySelector('.overlay-close') as HTMLButtonElement | null;
+		if (closeBtn) {
+			closeBtn.addEventListener('mousedown', (e: MouseEvent) => {
+				e.stopPropagation();
+				e.preventDefault();
+			});
+			closeBtn.addEventListener('click', (e: MouseEvent) => {
+				e.stopPropagation();
+				this.setActive(false);
+			});
+		}
 
 		header.addEventListener('mousedown', (e: MouseEvent) => {
 			// Start dragging from header
@@ -73,14 +102,18 @@ export class CrossSectionOverlay {
 		perpDir: THREE.Vector2,
 		halfWidth: number,
 		samples: number,
-		heightFn: HeightFunction
+		heightFn: HeightFunction,
+		profileCenterZ?: number,
+		template?: RoadTemplate,
+		daylightHtoV: number = 2
 	): SectionData {
-		const dir = perpDir.clone().normalize();
+		// Flip sampling direction so negative offsets plot to the left side in the overlay
+		const dir = perpDir.clone().multiplyScalar(-1).normalize();
 		const distances: number[] = [];
 		const elevations: number[] = [];
 		let minZ = Number.POSITIVE_INFINITY;
 		let maxZ = Number.NEGATIVE_INFINITY;
-		const centerZ = heightFn(centerXY.x, centerXY.y);
+		const centerZ = (profileCenterZ !== undefined) ? profileCenterZ : heightFn(centerXY.x, centerXY.y);
 
 		for (let i = 0; i < samples; i++) {
 			const t = i / (samples - 1);
@@ -98,10 +131,79 @@ export class CrossSectionOverlay {
 			maxZ += 0.5;
 			minZ -= 0.5;
 		}
-		return { distances, elevations, minZ, maxZ, centerZ, halfWidth };
+
+		// Optional: compute daylight from roadway outer edges using 2H:1V, matching 3D model
+		let leftEdgeOffset: number | undefined;
+		let leftEdgeZ: number | undefined;
+		let leftDaylightOffset: number | undefined;
+		let leftDaylightZ: number | undefined;
+		let rightEdgeOffset: number | undefined;
+		let rightEdgeZ: number | undefined;
+		let rightDaylightOffset: number | undefined;
+		let rightDaylightZ: number | undefined;
+
+		if (template) {
+			const laneWidth = template.laneWidth;
+			const shoulderWidth = template.shoulderWidth;
+			const halfTemplate = laneWidth + shoulderWidth;
+			const slopeLane = template.crossfallLane;
+			const slopeShoulder = template.crossfallShoulder;
+			const slopeAt = (offset: number) => (
+				(Math.abs(offset) <= laneWidth ? slopeLane : slopeShoulder) * Math.sign(offset || 0)
+			);
+
+			// Left
+			leftEdgeOffset = -halfTemplate;
+			leftEdgeZ = centerZ + slopeAt(leftEdgeOffset) * leftEdgeOffset;
+			{
+				const edgeXY = new THREE.Vector2(centerXY.x + dir.x * leftEdgeOffset, centerXY.y + dir.y * leftEdgeOffset);
+				const dirOut = dir.clone().multiplyScalar(-1); // further left = negative s direction
+				const zSurfAtEdge = heightFn(edgeXY.x, edgeXY.y);
+				const sign = Math.sign(zSurfAtEdge - leftEdgeZ) || 1; // cut(+)/fill(-)
+				const dzds = sign * (1 / Math.max(1e-6, daylightHtoV));
+				const dl = this.findDaylightIntersection(edgeXY, leftEdgeZ, dirOut, dzds, heightFn);
+				leftDaylightOffset = leftEdgeOffset - dl.s; // moving further negative
+				leftDaylightZ = dl.z;
+			}
+
+			// Right
+			rightEdgeOffset = +halfTemplate;
+			rightEdgeZ = centerZ + slopeAt(rightEdgeOffset) * rightEdgeOffset;
+			{
+				const edgeXY = new THREE.Vector2(centerXY.x + dir.x * rightEdgeOffset, centerXY.y + dir.y * rightEdgeOffset);
+				const dirOut = dir.clone(); // further right = positive s direction
+				const zSurfAtEdge = heightFn(edgeXY.x, edgeXY.y);
+				const sign = Math.sign(zSurfAtEdge - rightEdgeZ) || 1;
+				const dzds = sign * (1 / Math.max(1e-6, daylightHtoV));
+				const dr = this.findDaylightIntersection(edgeXY, rightEdgeZ, dirOut, dzds, heightFn);
+				rightDaylightOffset = rightEdgeOffset + dr.s;
+				rightDaylightZ = dr.z;
+			}
+		}
+
+		return {
+			distances,
+			elevations,
+			minZ,
+			maxZ,
+			centerZ,
+			halfWidth,
+			leftEdgeOffset,
+			leftEdgeZ,
+			leftDaylightOffset,
+			leftDaylightZ,
+			rightEdgeOffset,
+			rightEdgeZ,
+			rightDaylightOffset,
+			rightDaylightZ
+		};
 	}
 
-	public draw(section: SectionData, title?: string) {
+	public draw(section: SectionData, title?: string, template?: RoadTemplate) {
+		// Cache for redraws (e.g., on resize)
+		this.lastSection = section;
+		this.lastTitle = title;
+		this.lastTemplate = template;
 		// Fit canvas to CSS box each draw for crispness
 		const w = this.container.clientWidth;
 		const h = this.container.clientHeight - 32; // minus header
@@ -117,13 +219,25 @@ export class CrossSectionOverlay {
 		const plotW = Math.max(10, w - padL - padR);
 		const plotH = Math.max(10, h - padT - padB);
 
-		// Axes scales
+		// Axes scales with constant vertical exaggeration (2x) relative to horizontal scale
 		const minX = section.distances[0];
 		const maxX = section.distances[section.distances.length - 1];
-		const minY = section.minZ;
-		const maxY = section.maxZ;
+		const xScalePxPerM = plotW / Math.max(1e-6, (maxX - minX));
+		const verticalExaggeration = 2.0;
+		const yScalePxPerM = verticalExaggeration * xScalePxPerM;
+		const halfRangeMeters = (plotH / 2) / yScalePxPerM;
+		const minYPlot = section.centerZ - halfRangeMeters;
+		const maxYPlot = section.centerZ + halfRangeMeters;
 		const xToPx = (x: number) => padL + ((x - minX) / (maxX - minX)) * plotW;
-		const yToPx = (y: number) => padT + (1 - (y - minY) / (maxY - minY)) * plotH;
+		const yToPx = (y: number) => {
+			const dy = y - section.centerZ; // meters
+			const py = (plotH / 2) - dy * yScalePxPerM; // pixels from top of plot area
+			return padT + py;
+		};
+		const minY = minYPlot;
+		const maxY = maxYPlot;
+		const xToPx2 = xToPx; // keep names for following code sections
+		const yToPx2 = yToPx;
 
 		// Grid
 		ctx.strokeStyle = '#2b2f3a';
@@ -149,15 +263,16 @@ export class CrossSectionOverlay {
 		// Draw roadway template (design) centered at 0 offset using profile elevation
 		this.drawRoadwayTemplate({
 			ctx,
-			xToPx,
-			yToPx,
+			xToPx: xToPx2,
+			yToPx: yToPx2,
 			padT,
 			padL,
 			plotH,
 			plotW,
 			minX,
 			maxX,
-			centerZ: section.centerZ
+			centerZ: section.centerZ,
+			template
 		});
 
 		// Alignment offset line at x=0 (if in range)
@@ -196,12 +311,71 @@ export class CrossSectionOverlay {
 		ctx.lineWidth = 2;
 		ctx.beginPath();
 		for (let i = 0; i < section.distances.length; i++) {
-			const x = xToPx(section.distances[i]);
-			const y = yToPx(section.elevations[i]);
+			const x = xToPx2(section.distances[i]);
+			const y = yToPx2(section.elevations[i]);
 			if (i === 0) ctx.moveTo(x, y);
 			else ctx.lineTo(x, y);
 		}
 		ctx.stroke();
+
+		// Daylight slopes (2H:1V) if available
+		if (
+			section.leftEdgeOffset !== undefined && section.leftEdgeZ !== undefined &&
+			section.leftDaylightOffset !== undefined && section.leftDaylightZ !== undefined
+		) {
+			ctx.strokeStyle = '#64b5f6';
+			ctx.lineWidth = 2;
+			ctx.beginPath();
+			ctx.moveTo(xToPx2(section.leftEdgeOffset), yToPx2(section.leftEdgeZ));
+			ctx.lineTo(xToPx2(section.leftDaylightOffset), yToPx2(section.leftDaylightZ));
+			ctx.stroke();
+		}
+		if (
+			section.rightEdgeOffset !== undefined && section.rightEdgeZ !== undefined &&
+			section.rightDaylightOffset !== undefined && section.rightDaylightZ !== undefined
+		) {
+			ctx.strokeStyle = '#64b5f6';
+			ctx.lineWidth = 2;
+			ctx.beginPath();
+			ctx.moveTo(xToPx2(section.rightEdgeOffset), yToPx2(section.rightEdgeZ));
+			ctx.lineTo(xToPx2(section.rightDaylightOffset), yToPx2(section.rightDaylightZ));
+			ctx.stroke();
+		}
+	}
+
+	private findDaylightIntersection(
+		startXY: THREE.Vector2,
+		startZ: number,
+		dirXY: THREE.Vector2,
+		dzPerMeter: number,
+		heightFn: HeightFunction
+	): { x: number; y: number; z: number; s: number } {
+		const maxDistance = 200;
+		const step = 2;
+		let s0 = 0;
+		let f0 = (startZ) - heightFn(startXY.x, startXY.y);
+		let s1 = step;
+		let f1 = (startZ + dzPerMeter * s1) - heightFn(startXY.x + dirXY.x * s1, startXY.y + dirXY.y * s1);
+		while (Math.sign(f0) === Math.sign(f1) && s1 < maxDistance) {
+			s0 = s1; f0 = f1;
+			s1 = Math.min(maxDistance, s1 + step);
+			f1 = (startZ + dzPerMeter * s1) - heightFn(startXY.x + dirXY.x * s1, startXY.y + dirXY.y * s1);
+		}
+		let sStar = s1;
+		if (Math.sign(f0) !== Math.sign(f1)) {
+			let a = s0, fa = f0;
+			let b = s1, fb = f1;
+			for (let i = 0; i < 24; i++) {
+				const m = 0.5 * (a + b);
+				const fm = (startZ + dzPerMeter * m) - heightFn(startXY.x + dirXY.x * m, startXY.y + dirXY.y * m);
+				if (Math.sign(fa) === Math.sign(fm)) { a = m; fa = fm; } else { b = m; fb = fm; }
+			}
+			sStar = 0.5 * (a + b);
+		}
+		const x = startXY.x + dirXY.x * sStar;
+		const y = startXY.y + dirXY.y * sStar;
+		const zSurf = heightFn(x, y);
+		return { x, y, z: zSurf, s: sStar };
 	}
 
 	private drawRoadwayTemplate(args: {
@@ -215,29 +389,31 @@ export class CrossSectionOverlay {
 		minX: number;
 		maxX: number;
 		centerZ: number;
+		template?: RoadTemplate;
 	}) {
 		const { ctx, xToPx, yToPx, centerZ } = args;
-		// Simple symmetric crown template: lane + shoulder per side, different crossfalls
-		const LANE_WIDTH = 3.5;
-		const SHOULDER_WIDTH = 1.0;
-		const HALF_TEMPLATE = LANE_WIDTH + SHOULDER_WIDTH; // 4.5 m
-		const SLOPE_L = +0.02; // left side up-slope sign (+) with negative offset yields drop away from center
-		const SLOPE_R = -0.02; // right side
-		const SLOPE_SH_L = +0.04;
-		const SLOPE_SH_R = -0.04;
+		const laneWidth = args.template?.laneWidth ?? 3.5;
+		const shoulderWidth = args.template?.shoulderWidth ?? 1.0;
+		const half = laneWidth + shoulderWidth;
+		const crossfallLane = args.template?.crossfallLane ?? -0.02;
+		const crossfallShoulder = args.template?.crossfallShoulder ?? -0.04;
 
-		// Offsets: [left outer, left lane edge, center, right lane edge, right outer]
-		const oLOuter = -HALF_TEMPLATE;
-		const oLLane = -LANE_WIDTH;
+		// Offsets
+		const oLOuter = -half;
+		const oLLane = -laneWidth;
 		const oCenter = 0;
-		const oRLane = +LANE_WIDTH;
-		const oROuter = +HALF_TEMPLATE;
+		const oRLane = +laneWidth;
+		const oROuter = +half;
 
-		const zLOuter = centerZ + SLOPE_SH_L * oLOuter;
-		const zLLane = centerZ + SLOPE_L * oLLane;
+		// Match roadway.ts logic: slope depends on side and whether within lane or shoulder
+		const slopeAt = (offset: number) => (
+			(Math.abs(offset) <= laneWidth ? crossfallLane : crossfallShoulder) * Math.sign(offset || 0)
+		);
+		const zLOuter = centerZ + slopeAt(oLOuter) * oLOuter;
+		const zLLane = centerZ + slopeAt(oLLane) * oLLane;
 		const zCenter = centerZ;
-		const zRLane = centerZ + SLOPE_R * oRLane;
-		const zROuter = centerZ + SLOPE_SH_R * oROuter;
+		const zRLane = centerZ + slopeAt(oRLane) * oRLane;
+		const zROuter = centerZ + slopeAt(oROuter) * oROuter;
 
 		// Filled polygon
 		ctx.fillStyle = 'rgba(180, 190, 200, 0.14)';
@@ -270,6 +446,17 @@ export class CrossSectionOverlay {
 		ctx.lineTo(xToPx(oRLane), yToPx(zRLane));
 		ctx.stroke();
 		ctx.setLineDash([]);
+	}
+
+	private setupResizeObserver() {
+		if (!('ResizeObserver' in window)) return;
+		this.resizeObserver = new ResizeObserver(() => {
+			if (!this.active) return;
+			if (this.lastSection) {
+				this.draw(this.lastSection, this.lastTitle, this.lastTemplate);
+			}
+		});
+		this.resizeObserver.observe(this.container);
 	}
 }
 
