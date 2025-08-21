@@ -8,13 +8,58 @@
 	</head>
 	<body>
 		<button id="btn-cross-section" title="Toggle cross-section overlay">Cross-Section</button>
+		<button id="btn-profile" title="Toggle profile overlay" style="left: 140px;">Profile</button>
+		<button id="btn-settings" title="Roadway and daylight settings" style="left: 220px;">Settings</button>
 		<div id="overlay" class="overlay hidden">
 			<div class="overlay-header">
 				<span>Cross-Section</span>
+				<button class="overlay-close" aria-label="Close cross-section" title="Close">×</button>
 			</div>
 			<canvas id="overlay-canvas" width="320" height="200"></canvas>
 		</div>
+		<div id="profile-overlay" class="overlay hidden" style="top: 286px;">
+			<div class="overlay-header">
+				<span>Vertical Profile</span>
+				<button class="overlay-close" aria-label="Close profile" title="Close">×</button>
+			</div>
+			<canvas id="profile-canvas" width="320" height="200"></canvas>
+		</div>
+		<div id="settings-overlay" class="overlay hidden" style="top: 52px; left: 380px; width: 360px; height: 260px;">
+			<div class="overlay-header">
+				<span>Roadway Settings</span>
+				<button class="overlay-close" aria-label="Close settings" title="Close">×</button>
+			</div>
+			<div class="overlay-content">
+				<form id="settings-form">
+					<div class="field">
+						<label for="laneWidth">Lane width (m, per side)</label>
+						<input id="laneWidth" name="laneWidth" type="number" step="0.1" min="0" />
+					</div>
+					<div class="field">
+						<label for="shoulderWidth">Shoulder width (m, per side)</label>
+						<input id="shoulderWidth" name="shoulderWidth" type="number" step="0.1" min="0" />
+					</div>
+					<div class="field">
+						<label for="crossfallLane">Crossfall lane (slope, e.g., -0.02)</label>
+						<input id="crossfallLane" name="crossfallLane" type="number" step="0.005" />
+					</div>
+					<div class="field">
+						<label for="crossfallShoulder">Crossfall shoulder (slope, e.g., -0.04)</label>
+						<input id="crossfallShoulder" name="crossfallShoulder" type="number" step="0.005" />
+					</div>
+					<div class="field">
+						<label for="daylightHtoV">Daylight slope H:V (e.g., 2 = 2H:1V)</label>
+						<input id="daylightHtoV" name="daylightHtoV" type="number" step="0.1" min="0.1" />
+					</div>
+					<div class="actions">
+						<button type="button" id="btn-settings-apply">Apply</button>
+						<button type="button" id="btn-settings-reset">Reset</button>
+					</div>
+				</form>
+			</div>
+		</div>
 		<div id="app"></div>
+		<div id="coord-overlay" class="coords">E: —  N: —  Z: —</div>
 		<script type="module" src="/src/main.ts"></script>
 	</body>
 </html>
