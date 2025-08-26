@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { theme3D } from './theme';
 
 export class SectionMarker {
 	public readonly line: THREE.Line;
@@ -6,7 +7,7 @@ export class SectionMarker {
 	private readonly positions: Float32Array;
 	private readonly sphere: THREE.Mesh;
 
-	constructor(color = 0xcad0d7) {
+	constructor(color = theme3D.markerLine) {
 		// Two-point line segment
 		this.positions = new Float32Array(2 * 3);
 		this.geometry = new THREE.BufferGeometry();
@@ -18,7 +19,7 @@ export class SectionMarker {
 
 		// Persistent sphere child to mark the section location (added to the line object)
 		const sphereGeometry = new THREE.SphereGeometry(0.15, 8, 6);
-		const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xff6b35 });
+		const sphereMaterial = new THREE.MeshBasicMaterial({ color: theme3D.markerDot });
 		this.sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
 		this.sphere.renderOrder = 11;
 		this.line.add(this.sphere);

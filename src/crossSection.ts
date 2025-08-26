@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { theme2D } from './theme';
 import { HeightFunction } from './surface';
 import { RoadTemplate } from './roadway';
 
@@ -28,6 +29,14 @@ export class CrossSectionOverlay {
 	private isDragging = false;
 	private dragOffsetX = 0;
 	private dragOffsetY = 0;
+	// Pan/zoom state for plot
+	private viewXMin?: number;
+	private viewXMax?: number;
+	private viewCenterZOffset = 0;
+	private viewVEx = 2.0; // vertical exaggeration
+	private isPanningPlot = false;
+	private panLastX = 0;
+	private panLastY = 0;
 	private resizeObserver?: ResizeObserver;
 	private lastSection?: SectionData;
 	private lastTitle?: string;
@@ -45,6 +54,7 @@ export class CrossSectionOverlay {
 		this.ctx = ctx;
 
 		this.setupDrag();
+		this.setupInteractions();
 		this.setupResizeObserver();
 	}
 
@@ -54,6 +64,107 @@ export class CrossSectionOverlay {
 		if (on && this.lastSection) {
 			this.draw(this.lastSection, this.lastTitle, this.lastTemplate);
 		}
+	}
+
+	private setupInteractions() {
+		// Mouse wheel zoom and canvas drag to pan
+		this.canvas.addEventListener('wheel', (e: WheelEvent) => {
+			if (!this.active || !this.lastSection) return;
+			e.preventDefault();
+			const rect = this.canvas.getBoundingClientRect();
+			const px = e.clientX - rect.left;
+			const py = e.clientY - rect.top;
+			const w = this.container.clientWidth;
+			const h = this.container.clientHeight - 32;
+			if (w <= 0 || h <= 0) return;
+			const padL = 36, padR = 10, padT = 10, padB = 24;
+			const plotW = Math.max(10, w - padL - padR);
+			const plotH = Math.max(10, h - padT - padB);
+			// Only act if pointer is within plot area
+			if (px < padL || px > padL + plotW || py < padT || py > padT + plotH) return;
+			const section = this.lastSection;
+			const minXData = section.distances[0];
+			const maxXData = section.distances[section.distances.length - 1];
+			let xMin = this.viewXMin ?? minXData;
+			let xMax = this.viewXMax ?? maxXData;
+			const rangeX = Math.max(1e-6, xMax - xMin);
+			const xAtCursor = xMin + ((px - padL) / plotW) * rangeX;
+			// Zoom factor: positive deltaY -> zoom out
+			const factor = Math.pow(1.0015, -e.deltaY);
+			// Shift key: adjust vertical exaggeration instead of horizontal zoom
+			if (e.shiftKey) {
+				this.viewVEx = THREE.MathUtils.clamp(this.viewVEx * factor, 0.25, 20);
+			} else {
+				const newRange = THREE.MathUtils.clamp(rangeX / factor, 0.5, (maxXData - minXData) * 10 + 1000);
+				xMin = xAtCursor - (xAtCursor - xMin) * (newRange / rangeX);
+				xMax = xMin + newRange;
+				this.viewXMin = xMin;
+				this.viewXMax = xMax;
+			}
+			// Redraw
+			this.draw(section, this.lastTitle, this.lastTemplate);
+		}, { passive: false });
+
+		this.canvas.addEventListener('mousedown', (e: MouseEvent) => {
+			if (!this.active || !this.lastSection) return;
+			// Left button to pan inside plot
+			if (e.button !== 0) return;
+			const rect = this.canvas.getBoundingClientRect();
+			const px = e.clientX - rect.left;
+			const py = e.clientY - rect.top;
+			const w = this.container.clientWidth;
+			const h = this.container.clientHeight - 32;
+			const padL = 36, padR = 10, padT = 10, padB = 24;
+			const plotW = Math.max(10, w - padL - padR);
+			const plotH = Math.max(10, h - padT - padB);
+			if (px < padL || px > padL + plotW || py < padT || py > padT + plotH) return;
+			this.isPanningPlot = true;
+			this.panLastX = px;
+			this.panLastY = py;
+			e.preventDefault();
+		});
+
+		window.addEventListener('mousemove', (e: MouseEvent) => {
+			if (!this.isPanningPlot || !this.lastSection) return;
+			const rect = this.canvas.getBoundingClientRect();
+			const px = e.clientX - rect.left;
+			const py = e.clientY - rect.top;
+			const w = this.container.clientWidth;
+			const h = this.container.clientHeight - 32;
+			const padL = 36, padR = 10, padT = 10, padB = 24;
+			const plotW = Math.max(10, w - padL - padR);
+			const plotH = Math.max(10, h - padT - padB);
+			let xMin = this.viewXMin ?? this.lastSection.distances[0];
+			let xMax = this.viewXMax ?? this.lastSection.distances[this.lastSection.distances.length - 1];
+			const rangeX = Math.max(1e-6, xMax - xMin);
+			const metersPerPxX = rangeX / plotW;
+			const xDelta = (this.panLastX - px) * metersPerPxX; // drag right moves view right
+			xMin += xDelta;
+			xMax += xDelta;
+			this.viewXMin = xMin;
+			this.viewXMax = xMax;
+			// Vertical pan adjusts center Z offset
+			const yScalePxPerM = this.viewVEx * (plotW / rangeX);
+			const metersPerPxY = (yScalePxPerM > 1e-9) ? (1 / yScalePxPerM) : 0;
+			const yDeltaMeters = (py - this.panLastY) * metersPerPxY;
+			this.viewCenterZOffset += yDeltaMeters;
+			this.panLastX = px;
+			this.panLastY = py;
+			this.draw(this.lastSection, this.lastTitle, this.lastTemplate);
+		});
+
+		window.addEventListener('mouseup', () => {
+			this.isPanningPlot = false;
+		});
+
+		this.canvas.addEventListener('dblclick', () => {
+			// Reset view
+			this.viewXMin = undefined;
+			this.viewXMax = undefined;
+			this.viewCenterZOffset = 0;
+			this.viewVEx = 2.0;
+			if (this.lastSection) this.draw(this.lastSection, this.lastTitle, this.lastTemplate);
+		});
 	}
 
 	private setupDrag() {
@@ -144,34 +255,59 @@ export class CrossSectionOverlay {
 
 		if (template) {
 			const laneWidth = template.laneWidth;
-			const shoulderWidth = template.shoulderWidth;
-			const halfTemplate = laneWidth + shoulderWidth;
-			const slopeLane = template.crossfallLane;
-			const slopeShoulder = template.crossfallShoulder;
+			const halfTemplate = laneWidth;
+			const kerbEnabled = template.components?.kerb?.enabled !== false;
+			const footEnabled = template.components?.footpath?.enabled !== false;
+			const kerbW = template.components?.kerb?.width ?? template.kerbWidth ?? 0.25;
+			const kerbH = template.components?.kerb?.height ?? template.kerbHeight ?? 0.125;
+			const footW = template.components?.footpath?.width ?? template.footpathWidth ?? 1.5;
+			const xfallFoot = template.components?.footpath?.crossfall ?? template.crossfallFootpath ?? -0.02;
 			const slopeAt = (offset: number) => (
-				(Math.abs(offset) <= laneWidth ? slopeLane : slopeShoulder) * Math.sign(offset || 0)
+				(template.crossfallLane) * Math.sign(offset || 0)
 			);
 
-			// Left
-			leftEdgeOffset = -halfTemplate;
-			leftEdgeZ = centerZ + slopeAt(leftEdgeOffset) * leftEdgeOffset;
+			// Left footpath outer edge (or last enabled component)
 			{
+				const oPav = -halfTemplate;
+				const zPav = centerZ + slopeAt(oPav) * oPav;
+				const zKerbTop = zPav + (kerbEnabled ? kerbH : 0);
+				if (footEnabled) {
+					leftEdgeOffset = -(halfTemplate + (kerbEnabled ? kerbW : 0) + footW);
+					leftEdgeZ = zKerbTop + (xfallFoot * -1) * footW;
+				} else if (kerbEnabled) {
+					leftEdgeOffset = -(halfTemplate + kerbW);
+					leftEdgeZ = zKerbTop;
+				} else {
+					leftEdgeOffset = -halfTemplate;
+					leftEdgeZ = zPav;
+				}
 				const edgeXY = new THREE.Vector2(centerXY.x + dir.x * leftEdgeOffset, centerXY.y + dir.y * leftEdgeOffset);
-				const dirOut = dir.clone().multiplyScalar(-1); // further left = negative s direction
+				const dirOut = dir.clone().multiplyScalar(-1);
 				const zSurfAtEdge = heightFn(edgeXY.x, edgeXY.y);
-				const sign = Math.sign(zSurfAtEdge - leftEdgeZ) || 1; // cut(+)/fill(-)
+				const sign = Math.sign(zSurfAtEdge - leftEdgeZ) || 1;
 				const dzds = sign * (1 / Math.max(1e-6, daylightHtoV));
 				const dl = this.findDaylightIntersection(edgeXY, leftEdgeZ, dirOut, dzds, heightFn);
-				leftDaylightOffset = leftEdgeOffset - dl.s; // moving further negative
+				leftDaylightOffset = leftEdgeOffset - dl.s;
 				leftDaylightZ = dl.z;
 			}
 
-			// Right
-			rightEdgeOffset = +halfTemplate;
-			rightEdgeZ = centerZ + slopeAt(rightEdgeOffset) * rightEdgeOffset;
+			// Right footpath outer edge (or last enabled component)
 			{
+				const oPav = +halfTemplate;
+				const zPav = centerZ + slopeAt(oPav) * oPav;
+				const zKerbTop = zPav + (kerbEnabled ? kerbH : 0);
+				if (footEnabled) {
+					rightEdgeOffset = +(halfTemplate + (kerbEnabled ? kerbW : 0) + footW);
+					rightEdgeZ = zKerbTop + (xfallFoot * +1) * footW;
+				} else if (kerbEnabled) {
+					rightEdgeOffset = +(halfTemplate + kerbW);
+					rightEdgeZ = zKerbTop;
+				} else {
+					rightEdgeOffset = +halfTemplate;
+					rightEdgeZ = zPav;
+				}
 				const edgeXY = new THREE.Vector2(centerXY.x + dir.x * rightEdgeOffset, centerXY.y + dir.y * rightEdgeOffset);
-				const dirOut = dir.clone(); // further right = positive s direction
+				const dirOut = dir.clone();
 				const zSurfAtEdge = heightFn(edgeXY.x, edgeXY.y);
 				const sign = Math.sign(zSurfAtEdge - rightEdgeZ) || 1;
 				const dzds = sign * (1 / Math.max(1e-6, daylightHtoV));
@@ -219,18 +355,19 @@ export class CrossSectionOverlay {
 		const plotW = Math.max(10, w - padL - padR);
 		const plotH = Math.max(10, h - padT - padB);
 
-		// Axes scales with constant vertical exaggeration (2x) relative to horizontal scale
-		const minX = section.distances[0];
-		const maxX = section.distances[section.distances.length - 1];
+		// Axes scales with adjustable vertical exaggeration relative to horizontal scale
+		const minX = this.viewXMin ?? section.distances[0];
+		const maxX = this.viewXMax ?? section.distances[section.distances.length - 1];
 		const xScalePxPerM = plotW / Math.max(1e-6, (maxX - minX));
-		const verticalExaggeration = 2.0;
+		const verticalExaggeration = this.viewVEx;
 		const yScalePxPerM = verticalExaggeration * xScalePxPerM;
 		const halfRangeMeters = (plotH / 2) / yScalePxPerM;
-		const minYPlot = section.centerZ - halfRangeMeters;
-		const maxYPlot = section.centerZ + halfRangeMeters;
+		const yCenter = section.centerZ + this.viewCenterZOffset;
+		const minYPlot = yCenter - halfRangeMeters;
+		const maxYPlot = yCenter + halfRangeMeters;
 		const xToPx = (x: number) => padL + ((x - minX) / (maxX - minX)) * plotW;
 		const yToPx = (y: number) => {
-			const dy = y - section.centerZ; // meters
+			const dy = y - yCenter; // meters
 			const py = (plotH / 2) - dy * yScalePxPerM; // pixels from top of plot area
 			return padT + py;
 		};
@@ -240,7 +377,7 @@ export class CrossSectionOverlay {
 		const yToPx2 = yToPx;
 
 		// Grid
-		ctx.strokeStyle = '#2b2f3a';
+		ctx.strokeStyle = theme2D.grid;
 		ctx.lineWidth = 1;
 		ctx.beginPath();
 		for (let i = 0; i <= 4; i++) {
@@ -254,7 +391,7 @@ export class CrossSectionOverlay {
 		ctx.stroke();
 
 		// Axes
-		ctx.strokeStyle = '#aab0c0';
+		ctx.strokeStyle = theme2D.axes;
 		ctx.lineWidth = 1.2;
 		ctx.beginPath();
 		ctx.rect(padL, padT, plotW, plotH);
@@ -278,7 +415,7 @@ export class CrossSectionOverlay {
 		// Alignment offset line at x=0 (if in range)
 		if (minX < 0 && maxX > 0) {
 			const x0 = xToPx(0);
-			ctx.strokeStyle = '#c7cbd1';
+			ctx.strokeStyle = theme2D.axes;
 			ctx.lineWidth = 1.6;
 			ctx.setLineDash([]);
 			ctx.beginPath();
@@ -288,7 +425,7 @@ export class CrossSectionOverlay {
 		}
 
 		// Labels
-		ctx.fillStyle = '#aab0c0';
+		ctx.fillStyle = theme2D.labels;
 		ctx.font = '11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans';
 		ctx.fillText(`${title ?? ''}`, padL + 6, padT + 14);
 		ctx.fillText(`z [m]`, 6, padT + 12);
@@ -297,7 +434,7 @@ export class CrossSectionOverlay {
 		// Zero line if in range
 		if (minY < 0 && maxY > 0) {
 			const y0 = yToPx(0);
-			ctx.strokeStyle = '#3b3f4a';
+			ctx.strokeStyle = theme2D.grid;
 			ctx.setLineDash([4, 4]);
 			ctx.beginPath();
 			ctx.moveTo(padL, y0);
@@ -307,7 +444,7 @@ export class CrossSectionOverlay {
 		}
 
 		// Polyline
-		ctx.strokeStyle = '#ffd166';
+		ctx.strokeStyle = theme2D.polyline;
 		ctx.lineWidth = 2;
 		ctx.beginPath();
 		for (let i = 0; i < section.distances.length; i++) {
@@ -323,7 +460,7 @@ export class CrossSectionOverlay {
 			section.leftEdgeOffset !== undefined && section.leftEdgeZ !== undefined &&
 			section.leftDaylightOffset !== undefined && section.leftDaylightZ !== undefined
 		) {
-			ctx.strokeStyle = '#64b5f6';
+			ctx.strokeStyle = theme2D.daylight;
 			ctx.lineWidth = 2;
 			ctx.beginPath();
 			ctx.moveTo(xToPx2(section.leftEdgeOffset), yToPx2(section.leftEdgeZ));
@@ -334,7 +471,7 @@ export class CrossSectionOverlay {
 			section.rightEdgeOffset !== undefined && section.rightEdgeZ !== undefined &&
 			section.rightDaylightOffset !== undefined && section.rightDaylightZ !== undefined
 		) {
-			ctx.strokeStyle = '#64b5f6';
+			ctx.strokeStyle = theme2D.daylight;
 			ctx.lineWidth = 2;
 			ctx.beginPath();
 			ctx.moveTo(xToPx2(section.rightEdgeOffset), yToPx2(section.rightEdgeZ));
@@ -392,60 +529,124 @@ export class CrossSectionOverlay {
 		template?: RoadTemplate;
 	}) {
 		const { ctx, xToPx, yToPx, centerZ } = args;
-		const laneWidth = args.template?.laneWidth ?? 3.5;
-		const shoulderWidth = args.template?.shoulderWidth ?? 1.0;
-		const half = laneWidth + shoulderWidth;
-		const crossfallLane = args.template?.crossfallLane ?? -0.02;
-		const crossfallShoulder = args.template?.crossfallShoulder ?? -0.04;
+		const tpl = args.template;
+		if (!tpl) return;
+		const laneW = tpl.laneWidth;
+		const crossfallLane = tpl.crossfallLane;
+		const kerbEnabled = tpl.components?.kerb?.enabled !== false;
+		const footEnabled = tpl.components?.footpath?.enabled !== false;
+		const kerbW = tpl.components?.kerb?.width ?? tpl.kerbWidth ?? 0.25;
+		const kerbH = tpl.components?.kerb?.height ?? tpl.kerbHeight ?? 0.125;
+		const footW = tpl.components?.footpath?.width ?? tpl.footpathWidth ?? 1.5;
+		const pavThk = tpl.components?.pavement?.thickness ?? tpl.pavementThickness ?? 0.3;
+		const footThk = tpl.components?.footpath?.thickness ?? tpl.footpathThickness ?? 0.2;
+		const xfallFoot = tpl.components?.footpath?.crossfall ?? tpl.crossfallFootpath ?? -0.02;
 
-		// Offsets
-		const oLOuter = -half;
-		const oLLane = -laneWidth;
-		const oCenter = 0;
-		const oRLane = +laneWidth;
-		const oROuter = +half;
+		const slopeAt = (offset: number) => (crossfallLane * Math.sign(offset || 0));
 
-		// Match roadway.ts logic: slope depends on side and whether within lane or shoulder
-		const slopeAt = (offset: number) => (
-			(Math.abs(offset) <= laneWidth ? crossfallLane : crossfallShoulder) * Math.sign(offset || 0)
-		);
-		const zLOuter = centerZ + slopeAt(oLOuter) * oLOuter;
-		const zLLane = centerZ + slopeAt(oLLane) * oLLane;
-		const zCenter = centerZ;
-		const zRLane = centerZ + slopeAt(oRLane) * oRLane;
-		const zROuter = centerZ + slopeAt(oROuter) * oROuter;
+		// Convenience helpers
+		const drawFilled = (pts: Array<[number, number]>, fill: string, stroke?: string) => {
+			ctx.beginPath();
+			ctx.moveTo(xToPx(pts[0][0]), yToPx(pts[0][1]));
+			for (let i = 1; i < pts.length; i++) ctx.lineTo(xToPx(pts[i][0]), yToPx(pts[i][1]));
+			ctx.closePath();
+			ctx.fillStyle = fill;
+			ctx.fill();
+			if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+		};
+		const drawDot = (s: number, z: number, color = '#ff8a80') => {
+			const r = 3;
+			ctx.beginPath();
+			ctx.arc(xToPx(s), yToPx(z), r, 0, Math.PI * 2);
+			ctx.fillStyle = color;
+			ctx.strokeStyle = '#1b1e23';
+			ctx.lineWidth = 1;
+			ctx.fill();
+			ctx.stroke();
+		};
 
-		// Filled polygon
-		ctx.fillStyle = 'rgba(180, 190, 200, 0.14)';
-		ctx.beginPath();
-		ctx.moveTo(xToPx(oLOuter), yToPx(zLOuter));
-		ctx.lineTo(xToPx(oLLane), yToPx(zLLane));
-		ctx.lineTo(xToPx(oCenter), yToPx(zCenter));
-		ctx.lineTo(xToPx(oRLane), yToPx(zRLane));
-		ctx.lineTo(xToPx(oROuter), yToPx(zROuter));
-		ctx.closePath();
-		ctx.fill();
+		// Pavement top and bottom (single slab across)
+		const oL = -laneW, oC = 0, oR = +laneW;
+		const zTopL = centerZ + slopeAt(oL) * oL;
+		const zTopC = centerZ;
+		const zTopR = centerZ + slopeAt(oR) * oR;
+		const zBotL = zTopL - pavThk;
+		const zBotC = zTopC - pavThk;
+		const zBotR = zTopR - pavThk;
+		if (tpl.components?.pavement?.enabled !== false) {
+			drawFilled([
+				[oL, zTopL], [oC, zTopC], [oR, zTopR],
+				[oR, zBotR], [oC, zBotC], [oL, zBotL]
+			], 'rgba(124, 179, 66, 0.35)', '#4d6b2a');
+		}
 
-		// Edges
-		ctx.strokeStyle = '#9aa3ad';
-		ctx.lineWidth = 1.6;
-		ctx.beginPath();
-		ctx.moveTo(xToPx(oLOuter), yToPx(zLOuter));
-		ctx.lineTo(xToPx(oLLane), yToPx(zLLane));
-		ctx.lineTo(xToPx(oCenter), yToPx(zCenter));
-		ctx.lineTo(xToPx(oRLane), yToPx(zRLane));
-		ctx.lineTo(xToPx(oROuter), yToPx(zROuter));
-		ctx.stroke();
+		// Kerb (left and right) as solid above pavement
+		if (kerbEnabled) {
+			const zKerbInnerTopL = zTopL + kerbH;
+			const zKerbOuterTopL = zKerbInnerTopL; // simple flat top
+			const oKerbOuterL = -(laneW + kerbW);
+			drawFilled([
+				[oL, zKerbInnerTopL], [oKerbOuterL, zKerbOuterTopL],
+				[oKerbOuterL, zTopL], [oL, zTopL]
+			], 'rgba(255, 213, 79, 0.6)', '#b08f2a');
 
-		// Lane edge markers
-		ctx.strokeStyle = '#8a93a0';
-		ctx.lineWidth = 1;
-		ctx.setLineDash([6, 6]);
-		ctx.beginPath();
-		ctx.moveTo(xToPx(oLLane), yToPx(zLLane));
-		ctx.lineTo(xToPx(oRLane), yToPx(zRLane));
-		ctx.stroke();
-		ctx.setLineDash([]);
+			const zKerbInnerTopR = zTopR + kerbH;
+			const zKerbOuterTopR = zKerbInnerTopR;
+			const oKerbOuterR = +(laneW + kerbW);
+			drawFilled([
+				[oR, zKerbInnerTopR], [oKerbOuterR, zKerbOuterTopR],
+				[oKerbOuterR, zTopR], [oR, zTopR]
+			], 'rgba(255, 213, 79, 0.6)', '#b08f2a');
+		}
+
+		// Footpath slabs (left/right)
+		if (footEnabled) {
+			const zKerbOuterTopL = zTopL + (kerbEnabled ? kerbH : 0);
+			const oKerbOuterL = -(laneW + (kerbEnabled ? kerbW : 0));
+			const oFootOuterL = -(laneW + (kerbEnabled ? kerbW : 0) + footW);
+			const zFootInnerTopL = zKerbOuterTopL;
+			const zFootOuterTopL = zKerbOuterTopL + (xfallFoot * -1) * footW;
+			const zFootInnerBotL = zFootInnerTopL - footThk;
+			const zFootOuterBotL = zFootOuterTopL - footThk;
+			drawFilled([
+				[oKerbOuterL, zFootInnerTopL], [oFootOuterL, zFootOuterTopL],
+				[oFootOuterL, zFootOuterBotL], [oKerbOuterL, zFootInnerBotL]
+			], 'rgba(100, 181, 246, 0.45)', '#3a6ea8');
+
+			const zKerbOuterTopR = zTopR + (kerbEnabled ? kerbH : 0);
+			const oKerbOuterR = +(laneW + (kerbEnabled ? kerbW : 0));
+			const oFootOuterR = +(laneW + (kerbEnabled ? kerbW : 0) + footW);
+			const zFootInnerTopR = zKerbOuterTopR;
+			const zFootOuterTopR = zKerbOuterTopR + (xfallFoot * +1) * footW;
+			const zFootInnerBotR = zFootInnerTopR - footThk;
+			const zFootOuterBotR = zFootOuterTopR - footThk;
+			drawFilled([
+				[oKerbOuterR, zFootInnerTopR], [oFootOuterR, zFootOuterTopR],
+				[oFootOuterR, zFootOuterBotR], [oKerbOuterR, zFootInnerBotR]
+			], 'rgba(100, 181, 246, 0.45)', '#3a6ea8');
+		}
+
+		// Highlight top strings with small dots
+		drawDot(oL, zTopL);
+		drawDot(oR, zTopR);
+		if (kerbEnabled) {
+			const oKerbOuterL = -(laneW + kerbW);
+			const oKerbOuterR = +(laneW + kerbW);
+			const zKerbOuterTopL = zTopL + kerbH;
+			const zKerbOuterTopR = zTopR + kerbH;
+			drawDot(oKerbOuterL, zKerbOuterTopL);
+			drawDot(oKerbOuterR, zKerbOuterTopR);
+		}
+		if (footEnabled) {
+			const oFootOuterL = -(laneW + (kerbEnabled ? kerbW : 0) + footW);
+			const oFootOuterR = +(laneW + (kerbEnabled ? kerbW : 0) + footW);
+			const zKerbOuterTopL = zTopL + (kerbEnabled ? kerbH : 0);
+			const zKerbOuterTopR = zTopR + (kerbEnabled ? kerbH : 0);
+			const zFootOuterTopL = zKerbOuterTopL + (xfallFoot * -1) * footW;
+			const zFootOuterTopR = zKerbOuterTopR + (xfallFoot * +1) * footW;
+			drawDot(oFootOuterL, zFootOuterTopL);
+			drawDot(oFootOuterR, zFootOuterTopR);
+		}
 	}
 
 	private setupResizeObserver() {

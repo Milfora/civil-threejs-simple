@@ -9,7 +9,7 @@ html, body, #app {
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
 }
 
-#btn-cross-section, #btn-profile {
+#btn-cross-section, #btn-profile, #btn-align {
   position: absolute;
   top: 10px;
   left: 10px;
@@ -21,7 +21,7 @@ html, body, #app {
   border-radius: 6px;
   cursor: pointer;
 }
-#btn-cross-section:hover, #btn-profile:hover, #btn-settings:hover {
+#btn-cross-section:hover, #btn-profile:hover, #btn-settings:hover, #btn-align:hover {
   background: #292e36;
 }
 
@@ -149,6 +149,10 @@ html, body, #app {
   border-radius: 6px;
   font-size: 12px;
   pointer-events: none;
+}
+
+#volume-overlay.coords {
+  bottom: 40px;
 }
 
 
