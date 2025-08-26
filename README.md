@@ -39,16 +39,34 @@ npm run preview
 - Toggle overlays: click the “Cross‑Section” and “Profile” buttons
 - Drag overlays: grab the overlay header to move
 
+- Cross‑Section overlay pan/zoom:
+  - Wheel: zoom X around cursor
+  - Shift + Wheel: adjust vertical exaggeration (Y)
+  - Left‑drag inside plot: pan X and vertical center
+  - Double‑click: reset view
+
+- Profile overlay pan/zoom:
+  - Wheel: zoom X around cursor
+  - Shift + Wheel: zoom Y around cursor
+  - Left‑drag inside plot: pan X and Y
+  - Double‑click: reset view
+
+- Profile overlay editing:
+  - Right‑click inside plot: add an intermediate IP at cursor chainage
+  - Drag start/end dots: adjust start/end elevations (vertical)
+  - Drag intermediate dots: move left/right and up/down (clamped between neighbors)
+  - Browser context menu is disabled on the profile canvas for smooth editing
+
 
 ### How it works (high‑level)
 
 - Z‑up world: `THREE.Object3D.DEFAULT_UP.set(0, 0, 1)` in `src/main.ts`.
 - Surface: `createSurfaceMesh()` in `src/surface.ts` generates a procedural XY grid and displaces Z by `heightAt(x, y)`.
 - Alignment: `Alignment` in `src/alignment.ts` creates a simple polyline made of a line, an arc, and a line; provides nearest‑point queries and chainages.
-- Roadway: `createRoadwayMeshFromTwoIPs()` in `src/roadway.ts` builds a corridor ribbon using a two‑IP vertical profile (straight line between start/end elevations sampled from the surface). Crossfall is applied per side and lane/shoulder.
+- Roadway: `createRoadwayMeshFromTwoIPs()` in `src/roadway.ts` builds a corridor ribbon using a vertical profile. The profile defaults to a two‑IP straight line (start/end from surface) but supports a user‑edited piecewise‑linear grade (profile overlay IPs). Crossfall is applied per side and lane/shoulder.
 - Daylight: `createDaylightMeshFromTwoIPs()` casts outward slopes (2H:1V) from road outer edges to intersect the existing ground.
 - Cross‑section overlay: `CrossSectionOverlay` in `src/crossSection.ts` samples a section perpendicular to alignment at the current mouse location and draws the ground, roadway template, and daylight lines.
-- Profile overlay: `ProfileOverlay` in `src/profile.ts` samples existing ground along alignment and overlays a two‑IP design grade from start/end elevations.
+- Profile overlay: `ProfileOverlay` in `src/profile.ts` samples existing ground along alignment and overlays a piecewise‑linear design grade editable with IPs.
 
 
 ### Road template (design parameters)
@@ -101,6 +119,7 @@ civil-threejs-simple/
 - Grid is rotated to lie on the XY plane to match the Z‑up convention.
 - Materials are translucent for visual layering of surface, roadway, and daylight.
 - Cross‑section uses a vertical exaggeration (2×) for readability; horizontal scale matches section width.
+- Cross‑section uses a default vertical exaggeration (2×), adjustable with Shift + wheel; horizontal scale matches section width.
 - Daylight search uses a robust bisection‑style root find along outward normals; see `findDaylightIntersection()` in both `src/roadway.ts` and `src/crossSection.ts`.
 
 
