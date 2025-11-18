@@ -580,22 +580,28 @@ export class CrossSectionOverlay {
 			], 'rgba(124, 179, 66, 0.35)', '#4d6b2a');
 		}
 
-		// Kerb (left and right) as solid above pavement
+		// Kerb (left and right) as polygonal/beveled shape above pavement
 		if (kerbEnabled) {
-			const zKerbInnerTopL = zTopL + kerbH;
-			const zKerbOuterTopL = zKerbInnerTopL; // simple flat top
-			const oKerbOuterL = -(laneW + kerbW);
+			const oKerbOuterL = -(laneW + kerbW); // outer edge
+			const oKerbMid1L = -(laneW + 0.30 * kerbW); // mid-point 1
+			const oKerbMid2L = -(laneW + 0.70 * kerbW); // mid-point 2
+			const zInnerBaseL = zTopL; // inner base
+			const zInnerTopL = zTopL + 0.90 * kerbH; // inner chamfer
+			const zMidTopL = zTopL + kerbH; // full height from mid to outer
 			drawFilled([
-				[oL, zKerbInnerTopL], [oKerbOuterL, zKerbOuterTopL],
-				[oKerbOuterL, zTopL], [oL, zTopL]
+				[oL, zInnerTopL], [oKerbMid1L, zInnerTopL], [oKerbMid2L, zMidTopL], [oKerbOuterL, zMidTopL],
+				[oKerbOuterL, zInnerBaseL], [oL, zInnerBaseL]
 			], 'rgba(255, 213, 79, 0.6)', '#b08f2a');
 
-			const zKerbInnerTopR = zTopR + kerbH;
-			const zKerbOuterTopR = zKerbInnerTopR;
 			const oKerbOuterR = +(laneW + kerbW);
+			const oKerbMid1R = +(laneW + 0.30 * kerbW);
+			const oKerbMid2R = +(laneW + 0.70 * kerbW);
+			const zInnerBaseR = zTopR;
+			const zInnerTopR = zTopR + 0.90 * kerbH;
+			const zMidTopR = zTopR + kerbH;
 			drawFilled([
-				[oR, zKerbInnerTopR], [oKerbOuterR, zKerbOuterTopR],
-				[oKerbOuterR, zTopR], [oR, zTopR]
+				[oR, zInnerTopR], [oKerbMid1R, zInnerTopR], [oKerbMid2R, zMidTopR], [oKerbOuterR, zMidTopR],
+				[oKerbOuterR, zInnerBaseR], [oR, zInnerBaseR]
 			], 'rgba(255, 213, 79, 0.6)', '#b08f2a');
 		}
 
@@ -632,10 +638,20 @@ export class CrossSectionOverlay {
 		if (kerbEnabled) {
 			const oKerbOuterL = -(laneW + kerbW);
 			const oKerbOuterR = +(laneW + kerbW);
-			const zKerbOuterTopL = zTopL + kerbH;
-			const zKerbOuterTopR = zTopR + kerbH;
-			drawDot(oKerbOuterL, zKerbOuterTopL);
-			drawDot(oKerbOuterR, zKerbOuterTopR);
+			const oKerbMid1L = -(laneW + 0.30 * kerbW);
+			const oKerbMid2L = -(laneW + 0.70 * kerbW);
+			const oKerbMid1R = +(laneW + 0.30 * kerbW);
+			const oKerbMid2R = +(laneW + 0.70 * kerbW);
+			const zTopOuterL = zTopL + kerbH;
+			const zTopOuterR = zTopR + kerbH;
+			const zTopInnerL = zTopL + 0.90 * kerbH;
+			const zTopInnerR = zTopR + 0.90 * kerbH;
+			drawDot(oKerbOuterL, zTopOuterL);
+			drawDot(oKerbMid2L, zTopOuterL);
+			drawDot(oKerbMid1L, zTopInnerL);
+			drawDot(oKerbOuterR, zTopOuterR);
+			drawDot(oKerbMid2R, zTopOuterR);
+			drawDot(oKerbMid1R, zTopInnerR);
 		}
 		if (footEnabled) {
 			const oFootOuterL = -(laneW + (kerbEnabled ? kerbW : 0) + footW);

@@ -23,6 +23,68 @@ export interface RoadTemplate {
 	components?: RoadTemplateComponents;
 }
 
+// --- Vertical profile: parabolic evaluator between IPs ---
+type ParabolaSeg = { s0: number; s1: number; z0: number; g0: number; g1: number };
+
+function buildParabolicSegments(ipsIn: { s: number; z: number }[]): ParabolaSeg[] {
+	const ips = [...ipsIn].sort((a, b) => a.s - b.s);
+	if (ips.length < 2) return [];
+	const c: number[] = [];
+	for (let k = 0; k < ips.length - 1; k++) {
+		const ds = ips[k + 1].s - ips[k].s;
+		c.push(ds <= 1e-9 ? 0 : 2 * (ips[k + 1].z - ips[k].z) / ds);
+	}
+	const g: number[] = new Array(ips.length).fill(0);
+	g[0] = c[0] ?? 0;
+	for (let k = 0; k < ips.length - 1; k++) g[k + 1] = (c[k] ?? 0) - g[k];
+	const segs: ParabolaSeg[] = [];
+	for (let k = 0; k < ips.length - 1; k++) {
+		segs.push({ s0: ips[k].s, s1: ips[k + 1].s, z0: ips[k].z, g0: g[k], g1: g[k + 1] });
+	}
+	return segs;
+}
+
+function evalParabolaAt(seg: ParabolaSeg, s: number): number {
+	const L = Math.max(1e-9, seg.s1 - seg.s0);
+	const r = (seg.g1 - seg.g0) / L;
+	const ds = s - seg.s0;
+	return seg.z0 + seg.g0 * ds + 0.5 * r * ds * ds;
+}
+
+export function createParabolicEvaluator(ipsIn: { s: number; z: number }[]) {
+	const segs = buildParabolicSegments(ipsIn);
+	if (segs.length === 0) {
+		return {
+			evalZ: (_s: number) => (ipsIn[0]?.z ?? 0),
+			evalGrade: (_s: number) => 0
+		};
+	}
+	return {
+		evalZ: (s: number) => {
+			if (s <= segs[0].s0) return evalParabolaAt(segs[0], segs[0].s0);
+			if (s >= segs[segs.length - 1].s1) return evalParabolaAt(segs[segs.length - 1], segs[segs.length - 1].s1);
+			for (let i = 0; i < segs.length; i++) {
+				const seg = segs[i];
+				if (s >= seg.s0 && s <= seg.s1) return evalParabolaAt(seg, s);
+			}
+			return evalParabolaAt(segs[segs.length - 1], Math.min(segs[segs.length - 1].s1, Math.max(segs[0].s0, s)));
+		},
+		evalGrade: (s: number) => {
+			if (s <= segs[0].s0) return segs[0].g0;
+			if (s >= segs[segs.length - 1].s1) return segs[segs.length - 1].g1;
+			for (let i = 0; i < segs.length; i++) {
+				const seg = segs[i];
+				if (s >= seg.s0 && s <= seg.s1) {
+					const L = Math.max(1e-9, seg.s1 - seg.s0);
+					const r = (seg.g1 - seg.g0) / L;
+					return seg.g0 + r * (s - seg.s0);
+				}
+			}
+			return segs[segs.length - 1].g1;
+		}
+	};
+}
+
 export function createRoadwayMesh(
 	centerline: readonly THREE.Vector2[],
 	heightFn: HeightFunction,
@@ -158,22 +220,11 @@ export function createRoadwayMeshFromTwoIPs(
 	const zStart = (startZOverride ?? heightFn(start.x, start.y));
 	const zEnd = (endZOverride ?? heightFn(end.x, end.y));
 
+	const evalZParab = (gradeProfile && gradeProfile.length >= 2)
+		? createParabolicEvaluator(gradeProfile).evalZ
+		: null;
 	function evalCenterZ(sChain: number): number {
-		if (gradeProfile && gradeProfile.length >= 2) {
-			// Ensure sorted by s
-			const prof = [...gradeProfile].sort((a, b) => a.s - b.s);
-			if (sChain <= prof[0].s) return prof[0].z;
-			if (sChain >= prof[prof.length - 1].s) return prof[prof.length - 1].z;
-			for (let i = 0; i < prof.length - 1; i++) {
-				const a = prof[i];
-				const b = prof[i + 1];
-				if (sChain >= a.s && sChain <= b.s) {
-					const tSeg = (sChain - a.s) / Math.max(1e-9, (b.s - a.s));
-					return THREE.MathUtils.lerp(a.z, b.z, tSeg);
-				}
-			}
-		}
-		// Fallback to straight-line two-IP
+		if (evalZParab) return evalZParab(sChain);
 		const t = totalLength > 0 ? sChain / totalLength : 0;
 		return THREE.MathUtils.lerp(zStart, zEnd, t);
 	}
@@ -262,20 +313,11 @@ export function createRoadEdgesFromTwoIPs(
 	const zStart = (startZOverride ?? heightFn(start.x, start.y));
 	const zEnd = (endZOverride ?? heightFn(end.x, end.y));
 
+	const evalZParab2 = (gradeProfile && gradeProfile.length >= 2)
+		? createParabolicEvaluator(gradeProfile).evalZ
+		: null;
 	function evalCenterZ(sChain: number): number {
-		if (gradeProfile && gradeProfile.length >= 2) {
-			const prof = [...gradeProfile].sort((a, b) => a.s - b.s);
-			if (sChain <= prof[0].s) return prof[0].z;
-			if (sChain >= prof[prof.length - 1].s) return prof[prof.length - 1].z;
-			for (let i = 0; i < prof.length - 1; i++) {
-				const a = prof[i];
-				const b = prof[i + 1];
-				if (sChain >= a.s && sChain <= b.s) {
-					const tSeg = (sChain - a.s) / Math.max(1e-9, (b.s - a.s));
-					return THREE.MathUtils.lerp(a.z, b.z, tSeg);
-				}
-			}
-		}
+		if (evalZParab2) return evalZParab2(sChain);
 		const t = totalLength > 0 ? sChain / totalLength : 0;
 		return THREE.MathUtils.lerp(zStart, zEnd, t);
 	}
@@ -364,20 +406,11 @@ export function createDaylightMeshFromTwoIPs(
 	const zStart = (startZOverride ?? heightFn(start.x, start.y));
 	const zEnd = (endZOverride ?? heightFn(end.x, end.y));
 
+	const evalZParab3 = (gradeProfile && gradeProfile.length >= 2)
+		? createParabolicEvaluator(gradeProfile).evalZ
+		: null;
 	function evalCenterZ(sChain: number): number {
-		if (gradeProfile && gradeProfile.length >= 2) {
-			const prof = [...gradeProfile].sort((a, b) => a.s - b.s);
-			if (sChain <= prof[0].s) return prof[0].z;
-			if (sChain >= prof[prof.length - 1].s) return prof[prof.length - 1].z;
-			for (let i = 0; i < prof.length - 1; i++) {
-				const a = prof[i];
-				const b = prof[i + 1];
-				if (sChain >= a.s && sChain <= b.s) {
-					const tSeg = (sChain - a.s) / Math.max(1e-9, (b.s - a.s));
-					return THREE.MathUtils.lerp(a.z, b.z, tSeg);
-				}
-			}
-		}
+		if (evalZParab3) return evalZParab3(sChain);
 		const t = totalLength > 0 ? sChain / totalLength : 0;
 		return THREE.MathUtils.lerp(zStart, zEnd, t);
 	}
@@ -642,16 +675,42 @@ export function createCorridorFromTwoIPs(
 		group.add(pavementMesh);
 	}
 
-	// Kerb per side closed strip
+	// Kerb per side closed strip — polygonal (beveled) profile across width
+	// We approximate the kerb with a small inner chamfer and a short flat top
 	function kerbTop(i: number, offs: number[], sideSign: number): number[] {
 		const { zc } = rowBasis(i);
 		const oInner = sideSign * halfPav;
 		const zInner = zc + slopeAt(oInner) * oInner;
-		const zOuterTop = zInner + kerbH;
-		return [zInner, zOuterTop];
+		// Map each offset to [0,1] across kerb width to assign top Z
+		const oOuter = sideSign * (halfPav + kerbW);
+		const span = Math.max(1e-9, Math.abs(oOuter - oInner));
+		return offs.map(o => {
+			const t = Math.min(1, Math.max(0, Math.abs(o - oInner) / span));
+			// Piecewise: inner chamfer up to ~90% height, then to full height, then flat
+			let h = 0;
+			if (t <= 0.3) {
+				h = (t / 0.3) * (0.9 * kerbH);
+			} else if (t <= 0.7) {
+				h = 0.9 * kerbH + ((t - 0.3) / 0.4) * (0.1 * kerbH);
+			} else {
+				h = kerbH; // flat top towards outer edge
+			}
+			return zInner + h;
+		});
 	}
-	const offsetsKerbLeft = [-halfPav, -(halfPav + kerbW)];
-	const offsetsKerbRight = [halfPav, (halfPav + kerbW)];
+	// Use multiple columns to create the polygonal profile across kerb width
+	const offsetsKerbLeft = [
+		-halfPav,
+		-(halfPav + 0.30 * kerbW),
+		-(halfPav + 0.70 * kerbW),
+		-(halfPav + kerbW)
+	];
+	const offsetsKerbRight = [
+		halfPav,
+		(halfPav + 0.30 * kerbW),
+		(halfPav + 0.70 * kerbW),
+		(halfPav + kerbW)
+	];
 	if (kerbEnabled) {
 		const kerbColor = toHexColorNumber(template.components?.kerb?.color, 0xffd54f);
 		const kerbLeftMesh = buildClosedStrip('kerbL', offsetsKerbLeft, (i, o) => kerbTop(i, o, -1), Math.max(pavThk, footThk), kerbColor);

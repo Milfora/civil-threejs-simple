@@ -108,6 +108,10 @@ civil-threejs-simple/
 - `npm run build`: production build to `dist/`
 - `npm run preview`: preview the built `dist/`
 
+### This is for when
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+npm run dev
+
 
 ### Deployment
 
@@ -135,6 +139,44 @@ civil-threejs-simple/
 - Three.js (`three`)
 - TypeScript 5
 - Vite 5
+
+
+### Enhancements and next steps
+
+- **Core geometry**
+  - Parametric alignment editor (multiple tangents/arcs, optional clothoid transitions)
+  - Vertical curves (parabolic sag/crest between IPs) instead of strictly piecewise‑linear grade
+  - Superelevation transitions across lanes (smoothly vary crossfall along chainage)
+  - Widening, medians, curb/ditch elements, and basic parametric side features
+
+- **Data integration**
+  - Coordinate reference systems via `proj4` with configurable project origin/local grid
+  - Load real terrain from GeoTIFF DEMs using `geotiff.js`; optional hillshade/contours overlay
+  - Import/export of alignment/profile/template JSON; optional GeoJSON/CSV helpers
+
+- **Performance**
+  - Accelerated raycasting and spatial queries with `three-mesh-bvh`
+  - Level‑of‑detail for surface/corridor meshes and adaptive sampling based on zoom
+  - Off‑main‑thread computations (Web Workers) for sampling/intersection and caching results
+  - Use `InstancedMesh` for repeated markers and reduce geometry updates per frame
+
+- **UI/UX**
+  - Lightweight control panel with `tweakpane` or `lil-gui` for live parameters
+  - Keyboard shortcuts help overlay; touch gesture support for mobile/tablet
+  - Persist settings and edited profiles in `localStorage`; shareable URL parameters
+
+- **Testing and tooling**
+  - Geometry unit tests with `vitest` (e.g., nearest‑point, daylight intersection, chainage math)
+  - End‑to‑end overlay interaction tests with `playwright`
+  - Lint/format baseline with ESLint + Prettier
+
+- **Exporting and sharing**
+  - 3D export via `GLTFExporter` (corridor/daylight/surface); image snapshot utility
+  - Template/profile save/load to file (JSON) and drag‑and‑drop import
+
+- **PWA and deployment**
+  - Offline‑first build using `vite-plugin-pwa` (cache core assets and UI)
+  - Add GitHub Actions workflow to build and deploy `dist/` to Pages on push
 
 
 ### License
