@@ -1,0 +1,30 @@
+{
+  "laneWidth": 0.5,
+  "crossfallLane": -0.03,
+  "components": {
+    "pavement": {
+      "enabled": true,
+      "thickness": 0.1,
+      "color": "#7CB342"
+    },
+    "kerb": {
+      "enabled": true,
+      "width": 0.25,
+      "height": 0.12,
+      "color": "#FFD54F"
+    },
+    "footpath": {
+      "enabled": true,
+      "width": 0.5,
+      "thickness": 0.05,
+      "crossfall": -0.02,
+      "color": "#64B5F6"
+    },
+    "daylight": {
+      "enabled": true,
+      "slopeHtoV": 2,
+      "color": "#64B5F6"
+    }
+  }
+}
+

@@ -39,6 +39,8 @@ export class ProfileOverlay {
 	private gradeIPs: { s: number; z: number }[] = [];
 	private lastTitle?: string;
 	private lastMarkerChainage?: number;
+	// Cached vertical alignment segments for parabolic evaluation (parabola segments only)
+	private vSegments: { s0: number; s1: number; z0: number; g0: number; g1: number }[] = [];
 
 	constructor(containerId = 'profile-overlay', canvasId = 'profile-canvas') {
 		const container = document.getElementById(containerId) as HTMLDivElement | null;
@@ -137,21 +139,37 @@ export class ProfileOverlay {
 			const yToPx = (y: number) => padT + (1 - (y - minY) / (maxY - minY)) * plotH;
 			const ips = [...this.gradeIPs].sort((a, b) => a.s - b.s);
 			const r = 8;
-			// Right-click adds a new IP snapped to grade line at clicked s
+			// Right-click adds a new IP at the PVI (intersection of incoming/outgoing tangents) near clicked s
 			if (isRight) {
 				const sAt = minX + ((px - padL) / plotW) * (maxX - minX);
-				// Evaluate current grade at sAt by segment interpolation
-				let zAt = ips[0]?.z ?? this.lastProfile.gradeStartZ;
+				let newS = THREE.MathUtils.clamp(sAt, 0, this.lastProfile.length);
+				let newZ = this.evalDesignZParabolic(newS, ips);
+				// Find segment index k such that ips[k].s <= sAt <= ips[k+1].s
+				let k = -1;
 				for (let i = 0; i < ips.length - 1; i++) {
-					const a = ips[i];
-					const b = ips[i + 1];
-					if (sAt >= a.s && sAt <= b.s) {
-						const t = (sAt - a.s) / Math.max(1e-9, (b.s - a.s));
-						zAt = THREE.MathUtils.lerp(a.z, b.z, t);
-						break;
+					if (sAt >= ips[i].s && sAt <= ips[i + 1].s) { k = i; break; }
+				}
+				if (k === -1) {
+					k = sAt < (ips[0]?.s ?? 0) ? 0 : Math.max(0, ips.length - 2);
+				}
+				// Compute PVI from incoming tangent (ips[k-1]→ips[k]) and outgoing tangent (ips[k+1]→ips[k+2]) when available
+				if (k - 1 >= 0 && k + 2 < ips.length) {
+					const A0 = ips[k - 1], A1 = ips[k];
+					const B0 = ips[k + 1], B1 = ips[k + 2];
+					const dAs = Math.max(1e-9, A1.s - A0.s);
+					const dBs = Math.max(1e-9, B1.s - B0.s);
+					const gIn = (A1.z - A0.z) / dAs;
+					const gOut = (B1.z - B0.z) / dBs;
+					const denom = (gIn - gOut);
+					if (Math.abs(denom) > 1e-9) {
+						const sPVI = (B0.z - A1.z + gIn * A1.s - gOut * B0.s) / denom;
+						const zPVI = A1.z + gIn * (sPVI - A1.s);
+						// Clamp inside domain
+						newS = THREE.MathUtils.clamp(sPVI, 0, this.lastProfile.length);
+						newZ = zPVI;
 					}
 				}
-				this.gradeIPs.push({ s: THREE.MathUtils.clamp(sAt, 0, this.lastProfile.length), z: zAt });
+				this.gradeIPs.push({ s: newS, z: newZ });
 				this.gradeIPs.sort((a, b) => a.s - b.s);
 				this.onGradeChange?.({});
 				this.draw(this.lastProfile, this.lastTitle, this.lastMarkerChainage);
@@ -418,22 +436,26 @@ export class ProfileOverlay {
 			ctx.setLineDash([]);
 		}
 
-		// Piecewise-linear grade line using gradeIPs
+		// Parabolic grade line evaluated from IPs and drawn as sampled polyline
 		const ips = [...this.gradeIPs].sort((a, b) => a.s - b.s);
+		this.buildVerticalAlignmentSegments(ips);
 		ctx.strokeStyle = theme2D.axes;
 		ctx.lineWidth = 1.8;
 		ctx.setLineDash([6, 6]);
 		ctx.beginPath();
-		for (let i = 0; i < ips.length; i++) {
-			const px = xToPx(THREE.MathUtils.clamp(ips[i].s, 0, profile.length));
-			const py = yToPx(ips[i].z);
-			if (i === 0) ctx.moveTo(px, py);
-			else ctx.lineTo(px, py);
+		const samples = Math.max(64, Math.min(512, Math.floor(plotW / 4)));
+		for (let i = 0; i < samples; i++) {
+			const t = i / (samples - 1);
+			const s = THREE.MathUtils.lerp(minX, maxX, t);
+			const z = this.evalDesignZParabolic(s, ips);
+			const px = xToPx(THREE.MathUtils.clamp(s, 0, profile.length));
+			const py = yToPx(z);
+			if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
 		}
 		ctx.stroke();
 		ctx.setLineDash([]);
 
-		// IP markers (draggable) – draw each circle in its own path to avoid polygon fill
+		// IP markers (draggable, treated as PVIs) – draw each circle in its own path
 		ctx.fillStyle = theme2D.marker;
 		for (const ip of ips) {
 			const px = xToPx(THREE.MathUtils.clamp(ip.s, 0, profile.length));
@@ -441,6 +463,38 @@ export class ProfileOverlay {
 			ctx.beginPath();
 			ctx.arc(px, py, 3, 0, Math.PI * 2);
 			ctx.fill();
+		}
+
+		// Grade segment labels (percent slope) at midpoints of each segment
+		if (ips.length >= 2) {
+			ctx.font = '11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans';
+			ctx.fillStyle = theme2D.labels;
+			const prevAlign = ctx.textAlign;
+			const prevBaseline = ctx.textBaseline;
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'bottom';
+			for (let i = 0; i < ips.length - 1; i++) {
+				const a = ips[i];
+				const b = ips[i + 1];
+				const ds = b.s - a.s;
+				if (ds <= 1e-6) continue;
+				if (b.s < minX || a.s > maxX) continue;
+				const sMid = THREE.MathUtils.clamp((a.s + b.s) * 0.5, minX, maxX);
+				// Derivative (grade) at midpoint using parabolic evaluation
+				const gMid = this.evalDesignGradeParabolic(sMid, ips);
+				const zMid = this.evalDesignZParabolic(sMid, ips);
+				const gradePct = gMid * 100;
+				const pxMid = xToPx(sMid);
+				let pyMid = yToPx(zMid);
+				pyMid -= 8;
+				const text = `${gradePct >= 0 ? '+' : ''}${gradePct.toFixed(2)}%`;
+				ctx.lineWidth = 3;
+				ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+				ctx.strokeText(text, pxMid, pyMid);
+				ctx.fillText(text, pxMid, pyMid);
+			}
+			ctx.textAlign = prevAlign;
+			ctx.textBaseline = prevBaseline;
 		}
 	}
 
@@ -463,6 +517,81 @@ export class ProfileOverlay {
 
 	public getGradeProfile(): { s: number; z: number }[] {
 		return [...this.gradeIPs].sort((a, b) => a.s - b.s);
+	}
+
+	// --- Vertical alignment helpers (parabolic between IPs) ---
+	private buildVerticalAlignmentSegments(ipsIn: { s: number; z: number }[]): void {
+		const ips = [...ipsIn].sort((a, b) => a.s - b.s);
+		this.vSegments = [];
+		if (ips.length < 2) return;
+		// Compute c_k = 2*dz/L per segment and forward-propagate slopes g
+		const c: number[] = [];
+		for (let k = 0; k < ips.length - 1; k++) {
+			const ds = ips[k + 1].s - ips[k].s;
+			if (ds <= 1e-9) { c.push(0); continue; }
+			c.push(2 * (ips[k + 1].z - ips[k].z) / ds);
+		}
+		const g: number[] = new Array(ips.length).fill(0);
+		// Boundary: start slope = first segment chord slope (dz/ds)
+		{
+			const ds0 = Math.max(1e-9, ips[1].s - ips[0].s);
+			g[0] = (ips[1].z - ips[0].z) / ds0;
+		}
+		for (let k = 0; k < ips.length - 1; k++) {
+			g[k + 1] = (c[k] ?? 0) - g[k];
+		}
+		for (let k = 0; k < ips.length - 1; k++) {
+			const s0 = ips[k].s, s1 = ips[k + 1].s;
+			const z0 = ips[k].z;
+			const g0 = g[k];
+			const g1 = g[k + 1];
+			this.vSegments.push({ s0, s1, z0, g0, g1 });
+		}
+	}
+
+	private evalDesignZParabolic(sChain: number, ipsIn: { s: number; z: number }[]): number {
+		if (ipsIn.length < 2) {
+			return ipsIn[0]?.z ?? this.lastProfile?.gradeStartZ ?? 0;
+		}
+		if (this.vSegments.length === 0) this.buildVerticalAlignmentSegments(ipsIn);
+		const seg = this.findSegment(sChain);
+		if (!seg) {
+			const first = this.vSegments[0];
+			const last = this.vSegments[this.vSegments.length - 1];
+			if (!first || !last) return 0;
+			return sChain < first.s0 ? first.z0 : this.evalParabolaAt(last, last.s1);
+		}
+		return this.evalParabolaAt(seg, sChain);
+	}
+
+	private evalDesignGradeParabolic(sChain: number, ipsIn: { s: number; z: number }[]): number {
+		if (ipsIn.length < 2) return 0;
+		if (this.vSegments.length === 0) this.buildVerticalAlignmentSegments(ipsIn);
+		const seg = this.findSegment(sChain);
+		if (!seg) {
+			const first = this.vSegments[0];
+			const last = this.vSegments[this.vSegments.length - 1];
+			if (!first || !last) return 0;
+			return sChain < first.s0 ? (first as any).g0 ?? 0 : (last as any).g1 ?? 0;
+		}
+		const L = Math.max(1e-9, seg.s1 - seg.s0);
+		const r = ((seg as any).g1 - (seg as any).g0) / L;
+		return (seg as any).g0 + r * (sChain - seg.s0);
+	}
+
+	private findSegment(sChain: number): { s0: number; s1: number; z0: number; g0: number; g1: number } | null {
+		for (let i = 0; i < this.vSegments.length; i++) {
+			const seg = this.vSegments[i] as { s0: number; s1: number; z0: number; g0: number; g1: number };
+			if (sChain >= seg.s0 && sChain <= seg.s1) return seg;
+		}
+		return null;
+	}
+
+	private evalParabolaAt(seg: { s0: number; s1: number; z0: number; g0: number; g1: number }, s: number): number {
+		const L = Math.max(1e-9, seg.s1 - seg.s0);
+		const r = (seg.g1 - seg.g0) / L;
+		const ds = s - seg.s0;
+		return seg.z0 + seg.g0 * ds + 0.5 * r * ds * ds;
 	}
 }
 

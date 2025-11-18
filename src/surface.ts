@@ -26,7 +26,9 @@ export function createSurfaceMesh(size: number, segments: number, heightFn: Heig
 	geometry.computeVertexNormals();
 
 	const material = new THREE.MeshStandardMaterial({
-		color: 0x6d7a86,
+		color: 0xEBECEC,
+		transparent: true,
+		opacity: 0.5,
 		metalness: 0.0,
 		roughness: 1.0,
 		wireframe: true

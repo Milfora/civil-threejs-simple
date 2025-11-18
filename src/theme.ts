@@ -1,6 +1,6 @@
 // Centralized light, crisp grayscale theme inspired by architectural diagrams
 export const theme3D = {
-	background: 0xf2f4f7,
+	background: 0xE1EEF2,
 	gridMajor: 0xE6EAF0,
 	gridMinor: 0xEDF1F6,
 	alignment: 0x6b7280,

@@ -9,26 +9,14 @@ html, body, #app {
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
 }
 
-#btn-cross-section, #btn-profile, #btn-align {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 20;
-  border: 1px solid #3a3f46;
-  background: #21252b;
-  color: #e6e6e6;
-  padding: 6px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-#btn-cross-section:hover, #btn-profile:hover, #btn-settings:hover, #btn-align:hover {
+#btn-settings:hover {
   background: #292e36;
 }
 
 #btn-settings {
   position: absolute;
   top: 10px;
-  left: 220px;
+  left: 10px;
   z-index: 20;
   border: 1px solid #3a3f46;
   background: #21252b;
@@ -153,6 +141,160 @@ html, body, #app {
 
 #volume-overlay.coords {
   bottom: 40px;
+}
+
+/* Left tools panel */
+#tools-panel {
+  position: absolute;
+  top: 70px;
+  left: 10px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(30, 33, 39, 0.55);
+  border: 1px solid #3a3f46;
+  border-radius: 10px;
+  padding: 8px;
+  backdrop-filter: blur(2px);
+}
+.tool-section {
+  display: flex;
+  gap: 8px;
+}
+
+#tools-panel .tool-section {
+  flex-direction: column;
+}
+#section-panel .tool-section {
+  flex-direction: column;
+}
+
+#section-panel {
+  position: absolute;
+  top: 300px;
+  left: 10px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(30, 33, 39, 0.55);
+  border: 1px solid #3a3f46;
+  border-radius: 10px;
+  padding: 8px;
+  backdrop-filter: blur(2px);
+}
+.tool-section {
+  display: flex;
+  gap: 8px;
+}
+.tool-btn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #3a3f46;
+  background: #21252b;
+  color: #e6e6e6;
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 0;
+}
+.tool-btn:hover {
+  background: #292e36;
+}
+.popup-menu {
+  position: absolute;
+  top: 120px;
+  left: 58px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(30,33,39,0.95);
+  border: 1px solid #3a3f46;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+}
+.popup-menu.hidden { display: none; }
+.popup-menu button {
+  border: 1px solid #3a3f46;
+  background: #2a2f36;
+  color: #e6e6e6;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.popup-menu button:hover {
+  background: #343a43;
+}
+
+/* Template overlay specifics */
+#template-overlay .overlay-content {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.template-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid #3a3f46;
+  background: #1f2329;
+  color: #e6e6e6;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.template-item.selected {
+  outline: 1px solid #6aa9ff;
+  background: #242a31;
+}
+.template-item .thumb {
+  width: 40px;
+  height: 28px;
+  background: #2a2f36;
+  border: 1px solid #3a3f46;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #c7cbd1;
+}
+
+/* Trench Volume overlay positioning */
+#trench-volume-overlay.coords {
+  bottom: 70px;
+}
+
+/* Corridor info materials list */
+.mat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.mat-chip {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid #3a3f46;
 }
 
 
